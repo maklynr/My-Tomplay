@@ -39,6 +39,15 @@
             white-space: nowrap;
             text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff;
         }
+        .lyric-cue-html {
+            position: absolute;
+            color: #b91c1c;
+            font-weight: 400;
+            font-style: italic;
+            line-height: 1.1;
+            white-space: nowrap;
+            text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff;
+        }
         #pdf-container { display: none; flex-direction: column; align-items: center; gap: 10px; padding: 6px; }
         #pdf-container canvas { width: 100%; height: auto; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
         #placeholder { color: #64748b; text-align: center; margin-top: 22vh; padding: 20px; }
@@ -55,15 +64,34 @@
         button.ctrl.names-on { background: #b91c1c; }
         button.ctrl:active { opacity: 0.8; }
 
-        /* Seletor de Compasso */
-        .measure-row { display: flex; gap: 6px; align-items: center; justify-content: center; font-size: 12px; color: #cbd5e1; }
-        .measure-input { width: 52px; padding: 5px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; text-align: center; font-size: 13px; font-weight: bold; }
-        .btn-measure { background: #334155; color: white; border: none; padding: 5px 10px; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; }
+        /* Seletor de Compasso + Letra */
+        .measure-row { display: flex; gap: 5px; align-items: center; justify-content: center; font-size: 12px; color: #cbd5e1; flex-wrap: wrap; }
+        .measure-input { width: 46px; padding: 5px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; text-align: center; font-size: 13px; font-weight: bold; }
+        .btn-measure { background: #334155; color: white; border: none; padding: 5px 8px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; }
         .btn-measure.go { background: #2563eb; }
+        .btn-measure.lyric { background: #9333ea; }
+        .btn-measure.pdf-lyric { background: #0f766e; display: inline-block; }
         
         .sliders-row { display: flex; gap: 10px; justify-content: space-around; align-items: center; flex-wrap: wrap; font-size: 12px; color: #cbd5e1; }
         .slider-group { display: flex; align-items: center; gap: 5px; }
         input[type="range"] { width: 85px; accent-color: #10b981; }
+
+        /* Modal de Importação de Letras do PDF */
+        #lyricsModal {
+            display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85);
+            z-index: 100; align-items: center; justify-content: center; padding: 15px;
+        }
+        .modal-box {
+            background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+            width: 100%; max-width: 480px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden;
+        }
+        .modal-header { padding: 12px 15px; border-bottom: 1px solid #334155; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { padding: 12px 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .modal-row { display: flex; gap: 6px; align-items: center; }
+        .modal-row input[type="number"] { width: 54px; padding: 6px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; text-align: center; font-weight: bold; }
+        .modal-row input[type="text"] { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; font-size: 13px; }
+        .modal-row button.del { background: #ef4444; color: white; border: none; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-weight: bold; }
+        .modal-footer { padding: 10px 15px; border-top: 1px solid #334155; display: flex; justify-content: flex-end; gap: 8px; }
     </style>
 </head>
 <body>
@@ -84,7 +112,7 @@
             </label>
         </div>
         <div class="zoom-controls">
-            <span style="font-size:10px; color:#64748b; margin-right:2px;">v5</span>
+            <span style="font-size:10px; color:#64748b; margin-right:2px;">v7</span>
             <button class="btn-zoom" id="btnZoomOut">−</button>
             <span id="zoomLabel">45%</span>
             <button class="btn-zoom" id="btnZoomIn">+</button>
@@ -113,12 +141,17 @@
         </div>
 
         <div class="measure-row" id="measureRow">
-            <span>Compasso:</span>
+            <span>Comp.:</span>
             <button class="btn-measure" id="btnPrevMeasure">−</button>
             <input type="number" id="measureInput" class="measure-input" min="1" value="1">
             <button class="btn-measure" id="btnNextMeasure">+</button>
             <button class="btn-measure go" id="btnGoMeasure">Ir</button>
             <span id="totalMeasuresLabel" style="color: #94a3b8;">/ --</span>
+            <button class="btn-measure lyric" id="btnAddLyric">💬 Letra</button>
+            <label class="btn-measure pdf-lyric">
+                📥 Letras PDF
+                <input type="file" id="pdfLyricsInput" accept="application/pdf,.pdf">
+            </label>
         </div>
 
         <div class="sliders-row">
@@ -134,6 +167,24 @@
         <audio id="audioPlayer" style="display:none;"></audio>
     </footer>
 
+    <!-- Modal de confirmação das letras extraídas do PDF -->
+    <div id="lyricsModal">
+        <div class="modal-box">
+            <div class="modal-header">
+                <span>📥 Letras encontradas no PDF</span>
+                <button class="btn-measure" id="btnCloseModal">✕</button>
+            </div>
+            <div style="padding: 8px 15px 0; font-size: 12px; color: #94a3b8;">
+                Confira ou ajuste o número do compasso de cada frase e toque em <b>Aplicar</b>:
+            </div>
+            <div class="modal-body" id="modalLyricsList"></div>
+            <div class="modal-footer">
+                <button class="ctrl" id="btnCancelModal">Cancelar</button>
+                <button class="ctrl play" id="btnApplyModal">✅ Aplicar</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         if (typeof pdfjsLib !== 'undefined') {
             pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -141,6 +192,8 @@
 
         let osmd = null;
         let currentMode = 'none';
+        let currentXmlName = '';
+        let savedLyrics = {};
         let isPlaying = false;
         let stepTimeout = null;
         let currentBpm = 80;
@@ -216,6 +269,7 @@
         const noteNamesLayer = document.getElementById('note-names-layer');
         const xmlInput = document.getElementById('xmlInput');
         const pdfInput = document.getElementById('pdfInput');
+        const pdfLyricsInput = document.getElementById('pdfLyricsInput');
         const audioInput = document.getElementById('audioInput');
         const audioPlayer = document.getElementById('audioPlayer');
         const placeholder = document.getElementById('placeholder');
@@ -242,9 +296,173 @@
         const btnPrevMeasure = document.getElementById('btnPrevMeasure');
         const btnNextMeasure = document.getElementById('btnNextMeasure');
         const btnGoMeasure = document.getElementById('btnGoMeasure');
+        const btnAddLyric = document.getElementById('btnAddLyric');
         const totalMeasuresLabel = document.getElementById('totalMeasuresLabel');
 
+        const lyricsModal = document.getElementById('lyricsModal');
+        const modalLyricsList = document.getElementById('modalLyricsList');
+        const btnCloseModal = document.getElementById('btnCloseModal');
+        const btnCancelModal = document.getElementById('btnCancelModal');
+        const btnApplyModal = document.getElementById('btnApplyModal');
+
         zoomLabel.textContent = Math.round(currentZoom * 100) + "%";
+
+        function loadLyricsForScore(filename) {
+            currentXmlName = filename;
+            try {
+                const raw = localStorage.getItem('tomplay_lyrics_' + filename);
+                savedLyrics = raw ? JSON.parse(raw) : {};
+            } catch (e) {
+                savedLyrics = {};
+            }
+        }
+
+        function saveLyricsForScore() {
+            if (!currentXmlName) return;
+            try {
+                localStorage.setItem('tomplay_lyrics_' + currentXmlName, JSON.stringify(savedLyrics));
+            } catch (e) {}
+        }
+
+        // Botão manual de letra
+        btnAddLyric.addEventListener('click', () => {
+            if (currentMode !== 'xml' || !osmd) return;
+            const mNum = parseInt(measureInput.value) || 1;
+            const currentText = savedLyrics[mNum] || '';
+            const input = prompt(
+                `Digite a letra de entrada para o Compasso ${mNum}\n(Deixe vazio para apagar):`,
+                currentText
+            );
+            if (input === null) return;
+            if (input.trim() === '') {
+                delete savedLyrics[mNum];
+            } else {
+                savedLyrics[mNum] = input.trim();
+            }
+            saveLyricsForScore();
+            drawNoteNamesOverlay();
+        });
+
+        // Extrair letras automaticamente de um PDF
+        pdfLyricsInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            e.target.value = ''; // Permite selecionar o mesmo arquivo depois se quiser
+            if (!file) return;
+            if (currentMode !== 'xml' || !osmd) {
+                alert("Abra primeiro a partitura em formato XML.");
+                return;
+            }
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const foundPhrases = [];
+
+                for (let p = 1; p <= pdf.numPages; p++) {
+                    const page = await pdf.getPage(p);
+                    const textContent = await page.getTextContent();
+                    const items = textContent.items.filter(it => it.str && it.str.trim() !== '');
+
+                    // Agrupa palavras que estão na mesma linha horizontal (Y parecido)
+                    const lines = [];
+                    const numbersOnPage = [];
+
+                    items.forEach(it => {
+                        const x = it.transform[4];
+                        const y = it.transform[5];
+                        const str = it.str.trim();
+
+                        if (/^\d{1,3}$/.test(str)) {
+                            numbersOnPage.push({ num: parseInt(str), x, y });
+                        }
+
+                        let line = lines.find(l => Math.abs(l.y - y) < 5);
+                        if (!line) {
+                            line = { y, parts: [] };
+                            lines.push(line);
+                        }
+                        line.parts.push({ x, str });
+                    });
+
+                    // Ordena linhas de cima para baixo (no PDF, Y maior fica mais acima)
+                    lines.sort((a, b) => b.y - a.y);
+
+                    lines.forEach(line => {
+                        line.parts.sort((a, b) => a.x - b.x);
+                        const fullText = line.parts.map(pt => pt.str).join(' ').replace(/\s+/g, ' ').trim();
+                        const firstX = line.parts[0].x;
+
+                        // Filtra o que tem cara de letra de música (tem letras minúsculas e não é nome de instrumento)
+                        const hasLowercase = /[a-záàâãéêíóôõúç]/.test(fullText);
+                        const isInstrument = /trumpet|trompete|flute|sax|clarinet|piano|violin/i.test(fullText);
+                        const isTooShort = fullText.length < 4;
+
+                        if (hasLowercase && !isInstrument && !isTooShort) {
+                            // Tenta achar o número de compasso mais próximo acima/à esquerda desta frase
+                            let bestNum = 1;
+                            let bestScore = Infinity;
+                            numbersOnPage.forEach(n => {
+                                const dy = n.y - line.y; // Compasso fica acima da letra (dy > 0)
+                                if (dy > 5 && dy < 120) {
+                                    const dist = Math.hypot(n.x - firstX, dy * 1.5);
+                                    if (dist < bestScore) {
+                                        bestScore = dist;
+                                        bestNum = n.num;
+                                    }
+                                }
+                            });
+                            foundPhrases.push({
+                                measure: Math.min(bestNum, totalMeasures),
+                                text: fullText
+                            });
+                        }
+                    });
+                }
+
+                if (foundPhrases.length === 0) {
+                    alert("Nenhuma frase de letra foi encontrada neste PDF (ele pode ser uma imagem escaneada sem texto selecionável).");
+                    return;
+                }
+
+                // Monta a lista no modal para o usuário conferir
+                modalLyricsList.innerHTML = '';
+                foundPhrases.forEach(item => {
+                    const row = document.createElement('div');
+                    row.className = 'modal-row';
+                    row.innerHTML = `
+                        <input type="number" min="1" max="${totalMeasures}" value="${item.measure}" title="Compasso">
+                        <input type="text" value="${item.text.replace(/"/g, '&quot;')}">
+                        <button class="del" title="Remover">✕</button>
+                    `;
+                    row.querySelector('.del').addEventListener('click', () => row.remove());
+                    modalLyricsList.appendChild(row);
+                });
+
+                lyricsModal.style.display = 'flex';
+            } catch (err) {
+                alert("Erro ao ler o texto do PDF.");
+            }
+        });
+
+        function closeModal() {
+            lyricsModal.style.display = 'none';
+        }
+        btnCloseModal.addEventListener('click', closeModal);
+        btnCancelModal.addEventListener('click', closeModal);
+
+        btnApplyModal.addEventListener('click', () => {
+            const rows = modalLyricsList.querySelectorAll('.modal-row');
+            rows.forEach(row => {
+                const mNum = parseInt(row.querySelector('input[type="number"]').value);
+                const txt = row.querySelector('input[type="text"]').value.trim();
+                if (mNum >= 1 && mNum <= totalMeasures && txt !== '') {
+                    savedLyrics[mNum] = txt;
+                }
+            });
+            saveLyricsForScore();
+            drawNoteNamesOverlay();
+            closeModal();
+        });
 
         function getNoteName(sourceNote) {
             if (!sourceNote || !sourceNote.Pitch) return '';
@@ -260,20 +478,33 @@
             return letter + acc;
         }
 
-        // Camada HTML em pixels exatos: imune a distorções de zoom do SVG
+        function getStaveLineScreenY(gm, refEl, lineIndex) {
+            if (gm.stave && gm.stave.getYForLine && refEl && refEl.getScreenCTM) {
+                const ctm = refEl.getScreenCTM();
+                if (ctm) {
+                    return ctm.d * gm.stave.getYForLine(lineIndex) + ctm.f;
+                }
+            }
+            return null;
+        }
+
         function drawNoteNamesOverlay() {
             noteNamesLayer.innerHTML = '';
-            if (!showNoteNames || currentMode !== 'xml' || !osmd || !osmd.graphic || !osmd.graphic.MeasureList) return;
+            if (currentMode !== 'xml' || !osmd || !osmd.graphic || !osmd.graphic.MeasureList) return;
 
             const wrapperRect = sheetWrapper.getBoundingClientRect();
             const scrollTop = sheetWrapper.scrollTop;
             const scrollLeft = sheetWrapper.scrollLeft;
             const fontSize = Math.max(8, Math.round(16 * osmd.zoom));
+            const lyricFontSize = Math.max(8, Math.round(14 * osmd.zoom));
             const frag = document.createDocumentFragment();
 
             for (let m = 0; m < osmd.graphic.MeasureList.length; m++) {
                 const gm = osmd.graphic.MeasureList[m][0];
                 if (!gm || !gm.staffEntries) continue;
+
+                let firstRefEl = null;
+                let measureFirstNoteX = null;
 
                 for (let s = 0; s < gm.staffEntries.length; s++) {
                     const se = gm.staffEntries[s];
@@ -286,16 +517,16 @@
                         for (let n = 0; n < gve.notes.length; n++) {
                             const gn = gve.notes[n];
                             const sn = gn.sourceNote;
-                            if (!sn || sn.isRest()) continue;
-
-                            const label = getNoteName(sn);
-                            if (!label) continue;
+                            if (!sn) continue;
 
                             let noteEl = gn.getSVGGElement ? gn.getSVGGElement() : null;
                             if (!noteEl && gn.vfnote && gn.vfnote[0] && gn.vfnote[0].attrs) {
                                 noteEl = gn.vfnote[0].attrs.el;
                             }
                             if (!noteEl) continue;
+                            if (!firstRefEl) firstRefEl = noteEl;
+
+                            if (sn.isRest()) continue;
 
                             const headEl = noteEl.querySelector('.vf-notehead') || noteEl;
                             const headRect = headEl.getBoundingClientRect();
@@ -303,7 +534,19 @@
                             if (headRect.width === 0 && headRect.height === 0) continue;
 
                             const x = (headRect.left - wrapperRect.left) + scrollLeft + (headRect.width / 2);
-                            const y = (noteRect.top - wrapperRect.top) + scrollTop - fontSize - 3;
+                            if (measureFirstNoteX === null) measureFirstNoteX = x;
+
+                            if (!showNoteNames) continue;
+
+                            const label = getNoteName(sn);
+                            if (!label) continue;
+
+                            const staveTopScreenY = getStaveLineScreenY(gm, noteEl, 0);
+                            const refTopScreenY = (staveTopScreenY !== null)
+                                ? Math.min(staveTopScreenY - 4, noteRect.top - 2)
+                                : (noteRect.top - 2);
+
+                            const y = (refTopScreenY - wrapperRect.top) + scrollTop - fontSize - 2;
 
                             const span = document.createElement('span');
                             span.className = 'note-label-html';
@@ -313,6 +556,25 @@
                             span.textContent = label;
                             frag.appendChild(span);
                         }
+                    }
+                }
+
+                const mNum = gm.measureNumber;
+                if (savedLyrics[mNum] && firstRefEl) {
+                    const staveBottomScreenY = getStaveLineScreenY(gm, firstRefEl, 4);
+                    if (staveBottomScreenY !== null) {
+                        const lyricY = (staveBottomScreenY - wrapperRect.top) + scrollTop + 6;
+                        const lyricX = (measureFirstNoteX !== null)
+                            ? Math.max(8, measureFirstNoteX - 10)
+                            : ((firstRefEl.getBoundingClientRect().left - wrapperRect.left) + scrollLeft);
+
+                        const lyricDiv = document.createElement('div');
+                        lyricDiv.className = 'lyric-cue-html';
+                        lyricDiv.style.left = lyricX + 'px';
+                        lyricDiv.style.top = lyricY + 'px';
+                        lyricDiv.style.fontSize = lyricFontSize + 'px';
+                        lyricDiv.textContent = savedLyrics[mNum];
+                        frag.appendChild(lyricDiv);
                     }
                 }
             }
@@ -493,6 +755,7 @@
             const file = e.target.files[0];
             if (!file) return;
             pauseAll();
+            loadLyricsForScore(file.name);
             currentMode = 'xml';
             placeholder.style.display = 'none';
             pdfContainer.style.display = 'none';
@@ -516,7 +779,7 @@
                     osmd.EngravingRules.PageLeftMargin = 1.5;
                     osmd.EngravingRules.PageRightMargin = 1.5;
                     osmd.EngravingRules.PageTopMargin = 2.0;
-                    osmd.EngravingRules.MinimumDistanceBetweenSystems = 6.0;
+                    osmd.EngravingRules.MinimumDistanceBetweenSystems = 7.5;
                     osmd.zoom = currentZoom;
                     osmd.render();
                     setTimeout(drawNoteNamesOverlay, 120);
