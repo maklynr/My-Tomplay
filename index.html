@@ -113,7 +113,7 @@
             </label>
         </div>
         <div class="zoom-controls">
-            <span style="font-size:10px; color:#64748b; margin-right:2px;">v8</span>
+            <span style="font-size:10px; color:#64748b; margin-right:2px;">v9</span>
             <button class="btn-zoom" id="btnZoomOut">−</button>
             <span id="zoomLabel">45%</span>
             <button class="btn-zoom" id="btnZoomIn">+</button>
@@ -344,7 +344,32 @@
             drawNoteNamesOverlay();
         });
 
-        // Extrair letras do PDF (tenta texto direto; se for imagem, usa OCR automático)
+        // Filtro inteligente: isola APENAS texto vermelho (apaga pentagrama e notas pretas antes do OCR)
+        function isolateRedTextOnCanvas(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const d = imgData.data;
+            let redPixels = 0;
+
+            for (let i = 0; i < d.length; i += 4) {
+                const r = d[i], g = d[i + 1], b = d[i + 2];
+                // Pixel avermelhado (letra/cifra vermelha)
+                if (r > g + 22 && r > b + 22 && r > 70) {
+                    d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; // Vira preto nítido para o OCR
+                    redPixels++;
+                } else {
+                    d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; // Apaga pentagrama e notas
+                }
+            }
+
+            if (redPixels > 200) {
+                ctx.putImageData(imgData, 0, 0);
+                return true;
+            }
+            return false;
+        }
+
+        // Extrair letras do PDF
         pdfLyricsInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             e.target.value = '';
@@ -417,31 +442,40 @@
                     });
                 }
 
-                // Tentativa 2: Se o PDF for imagem (sem texto selecionável), roda OCR automático
+                // Tentativa 2: OCR limpo (apagando o pentagrama preto antes de ler)
                 if (foundPhrases.length === 0 && typeof Tesseract !== 'undefined') {
                     for (let p = 1; p <= pdf.numPages; p++) {
                         pdfLyricsText.textContent = `⏳ OCR pág. ${p}/${pdf.numPages}...`;
                         const page = await pdf.getPage(p);
-                        const viewport = page.getViewport({ scale: 2.0 });
+                        const viewport = page.getViewport({ scale: 2.2 });
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
                         canvas.width = viewport.width;
                         canvas.height = viewport.height;
                         await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
+                        // Apaga tudo que é preto (pentagrama/notas) e deixa só o texto vermelho
+                        isolateRedTextOnCanvas(canvas);
+
                         const { data } = await Tesseract.recognize(canvas, 'por');
                         const ocrLines = data.text.split('\n');
 
                         ocrLines.forEach(rawLine => {
                             const txt = rawLine.replace(/\s+/g, ' ').trim();
-                            // Pega linhas que tenham palavras reais em minúsculas (letras da música)
-                            const hasWord = /[a-záàâãéêíóôõúç]{3,}/.test(txt);
+                            // Só aceita linhas que tenham palavras reais em minúsculas (descarta A#, C#, etc.)
+                            const lowerWords = txt.match(/[a-záàâãéêíóôõúç]{3,}/g) || [];
                             const isInstrument = /trumpet|trompete|flute|sax|clarinet|piano|violin/i.test(txt);
-                            if (hasWord && !isInstrument && txt.length >= 5) {
-                                foundPhrases.push({
-                                    measure: 1,
-                                    text: txt
-                                });
+
+                            if (lowerWords.length >= 1 && !isInstrument && txt.length >= 5) {
+                                // Garante que não é maioria maiúscula/lixo
+                                const lowerCount = (txt.match(/[a-záàâãéêíóôõúç]/g) || []).length;
+                                const upperCount = (txt.match(/[A-Z]/g) || []).length;
+                                if (lowerCount > upperCount) {
+                                    foundPhrases.push({
+                                        measure: 1,
+                                        text: txt
+                                    });
+                                }
                             }
                         });
                     }
@@ -454,7 +488,6 @@
                     return;
                 }
 
-                // Monta a janela para conferir/ajustar o compasso de cada frase
                 modalLyricsList.innerHTML = '';
                 foundPhrases.forEach(item => {
                     const row = document.createElement('div');
