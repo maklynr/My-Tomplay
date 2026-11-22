@@ -76,23 +76,6 @@
         .sliders-row { display: flex; gap: 10px; justify-content: space-around; align-items: center; flex-wrap: wrap; font-size: 12px; color: #cbd5e1; }
         .slider-group { display: flex; align-items: center; gap: 5px; }
         input[type="range"] { width: 85px; accent-color: #10b981; }
-
-        /* Modal de Importação de Letras do PDF */
-        #lyricsModal {
-            display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85);
-            z-index: 100; align-items: center; justify-content: center; padding: 15px;
-        }
-        .modal-box {
-            background: #1e293b; border: 1px solid #334155; border-radius: 12px;
-            width: 100%; max-width: 480px; max-height: 80vh; display: flex; flex-direction: column; overflow: hidden;
-        }
-        .modal-header { padding: 12px 15px; border-bottom: 1px solid #334155; font-weight: bold; font-size: 15px; display: flex; justify-content: space-between; align-items: center; }
-        .modal-body { padding: 12px 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-        .modal-row { display: flex; gap: 6px; align-items: center; }
-        .modal-row input[type="number"] { width: 54px; padding: 6px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; text-align: center; font-weight: bold; }
-        .modal-row input[type="text"] { flex: 1; padding: 6px 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; font-size: 13px; }
-        .modal-row button.del { background: #ef4444; color: white; border: none; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-weight: bold; }
-        .modal-footer { padding: 10px 15px; border-top: 1px solid #334155; display: flex; justify-content: flex-end; gap: 8px; }
     </style>
 </head>
 <body>
@@ -113,7 +96,7 @@
             </label>
         </div>
         <div class="zoom-controls">
-            <span style="font-size:10px; color:#64748b; margin-right:2px;">v9</span>
+            <span style="font-size:10px; color:#64748b; margin-right:2px;">v10</span>
             <button class="btn-zoom" id="btnZoomOut">−</button>
             <span id="zoomLabel">45%</span>
             <button class="btn-zoom" id="btnZoomIn">+</button>
@@ -167,24 +150,6 @@
         </div>
         <audio id="audioPlayer" style="display:none;"></audio>
     </footer>
-
-    <!-- Modal de confirmação das letras extraídas do PDF -->
-    <div id="lyricsModal">
-        <div class="modal-box">
-            <div class="modal-header">
-                <span>📥 Letras encontradas no PDF</span>
-                <button class="btn-measure" id="btnCloseModal">✕</button>
-            </div>
-            <div style="padding: 8px 15px 0; font-size: 12px; color: #94a3b8;">
-                Confira ou ajuste o número do compasso de cada frase e toque em <b>Aplicar</b>:
-            </div>
-            <div class="modal-body" id="modalLyricsList"></div>
-            <div class="modal-footer">
-                <button class="ctrl" id="btnCancelModal">Cancelar</button>
-                <button class="ctrl play" id="btnApplyModal">✅ Aplicar</button>
-            </div>
-        </div>
-    </div>
 
     <script>
         if (typeof pdfjsLib !== 'undefined') {
@@ -301,12 +266,6 @@
         const btnAddLyric = document.getElementById('btnAddLyric');
         const totalMeasuresLabel = document.getElementById('totalMeasuresLabel');
 
-        const lyricsModal = document.getElementById('lyricsModal');
-        const modalLyricsList = document.getElementById('modalLyricsList');
-        const btnCloseModal = document.getElementById('btnCloseModal');
-        const btnCancelModal = document.getElementById('btnCancelModal');
-        const btnApplyModal = document.getElementById('btnApplyModal');
-
         zoomLabel.textContent = Math.round(currentZoom * 100) + "%";
 
         function loadLyricsForScore(filename) {
@@ -344,7 +303,51 @@
             drawNoteNamesOverlay();
         });
 
-        // Filtro inteligente: isola APENAS texto vermelho (apaga pentagrama e notas pretas antes do OCR)
+        // Verifica se um compasso no MusicXML contém apenas pausas (nenhuma nota tocada)
+        function isMeasureAllRests(sourceMeasure) {
+            if (!sourceMeasure || !sourceMeasure.VerticalSourceStaffEntryContainers) return true;
+            let hasSoundingNote = false;
+            for (const container of sourceMeasure.VerticalSourceStaffEntryContainers) {
+                if (!container || !container.StaffEntries) continue;
+                for (const se of container.StaffEntries) {
+                    if (!se || !se.VoiceEntries) continue;
+                    for (const ve of se.VoiceEntries) {
+                        if (!ve || !ve.Notes) continue;
+                        for (const note of ve.Notes) {
+                            if (note && !note.isRest()) {
+                                hasSoundingNote = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            return !hasSoundingNote;
+        }
+
+        // Descobre automaticamente todos os compassos onde o instrumento entra após um compasso inteiro de pausa
+        function getPostRestEntryMeasures() {
+            if (!osmd || !osmd.sheet || !osmd.sheet.SourceMeasures) return [];
+            const measures = osmd.sheet.SourceMeasures;
+            const entries = [];
+            for (let i = 1; i < measures.length; i++) {
+                if (isMeasureAllRests(measures[i - 1]) && !isMeasureAllRests(measures[i])) {
+                    entries.push(measures[i].MeasureNumber);
+                }
+            }
+            return entries;
+        }
+
+        // Limpa sujeiras comuns do OCR (asteriscos, aspas duplicadas, "0o" -> "o")
+        function cleanOcrText(raw) {
+            let txt = raw.replace(/^[\*\-\s"'“”]+/, '').replace(/[\*\s"'“”]+$/, '').trim();
+            txt = txt.replace(/\.{2,}/g, '...');
+            txt = txt.replace(/\b0o\b/gi, 'o');
+            txt = txt.replace(/\.\.\.0([a-z])/gi, '...$1');
+            return '"' + txt + '"';
+        }
+
+        // Filtro: isola APENAS texto vermelho (apaga pentagrama e notas pretas antes do OCR)
         function isolateRedTextOnCanvas(canvas) {
             const ctx = canvas.getContext('2d');
             const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -353,12 +356,11 @@
 
             for (let i = 0; i < d.length; i += 4) {
                 const r = d[i], g = d[i + 1], b = d[i + 2];
-                // Pixel avermelhado (letra/cifra vermelha)
                 if (r > g + 22 && r > b + 22 && r > 70) {
-                    d[i] = 0; d[i + 1] = 0; d[i + 2] = 0; // Vira preto nítido para o OCR
+                    d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
                     redPixels++;
                 } else {
-                    d[i] = 255; d[i + 1] = 255; d[i + 2] = 255; // Apaga pentagrama e notas
+                    d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
                 }
             }
 
@@ -369,7 +371,7 @@
             return false;
         }
 
-        // Extrair letras do PDF
+        // Extrai letras do PDF e aplica AUTOMATICAMENTE nos compassos após pausas
         pdfLyricsInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             e.target.value = '';
@@ -383,26 +385,19 @@
                 pdfLyricsText.textContent = "⏳ Lendo PDF...";
                 const arrayBuffer = await file.arrayBuffer();
                 const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                const foundPhrases = [];
+                const foundTexts = [];
 
                 // Tentativa 1: Texto selecionável direto do PDF
                 for (let p = 1; p <= pdf.numPages; p++) {
                     const page = await pdf.getPage(p);
                     const textContent = await page.getTextContent();
                     const items = textContent.items.filter(it => it.str && it.str.trim() !== '');
-
                     const lines = [];
-                    const numbersOnPage = [];
 
                     items.forEach(it => {
                         const x = it.transform[4];
                         const y = it.transform[5];
                         const str = it.str.trim();
-
-                        if (/^\d{1,3}$/.test(str)) {
-                            numbersOnPage.push({ num: parseInt(str), x, y });
-                        }
-
                         let line = lines.find(l => Math.abs(l.y - y) < 5);
                         if (!line) {
                             line = { y, parts: [] };
@@ -412,38 +407,19 @@
                     });
 
                     lines.sort((a, b) => b.y - a.y);
-
                     lines.forEach(line => {
                         line.parts.sort((a, b) => a.x - b.x);
                         const fullText = line.parts.map(pt => pt.str).join(' ').replace(/\s+/g, ' ').trim();
-                        const firstX = line.parts[0].x;
-
                         const hasLowercase = /[a-záàâãéêíóôõúç]{2,}/.test(fullText);
                         const isInstrument = /trumpet|trompete|flute|sax|clarinet|piano|violin/i.test(fullText);
-
                         if (hasLowercase && !isInstrument && fullText.length >= 4) {
-                            let bestNum = 1;
-                            let bestScore = Infinity;
-                            numbersOnPage.forEach(n => {
-                                const dy = n.y - line.y;
-                                if (dy > 5 && dy < 120) {
-                                    const dist = Math.hypot(n.x - firstX, dy * 1.5);
-                                    if (dist < bestScore) {
-                                        bestScore = dist;
-                                        bestNum = n.num;
-                                    }
-                                }
-                            });
-                            foundPhrases.push({
-                                measure: Math.min(bestNum, totalMeasures),
-                                text: fullText
-                            });
+                            foundTexts.push(cleanOcrText(fullText));
                         }
                     });
                 }
 
-                // Tentativa 2: OCR limpo (apagando o pentagrama preto antes de ler)
-                if (foundPhrases.length === 0 && typeof Tesseract !== 'undefined') {
+                // Tentativa 2: OCR limpo (apagando pentagrama preto antes de ler)
+                if (foundTexts.length === 0 && typeof Tesseract !== 'undefined') {
                     for (let p = 1; p <= pdf.numPages; p++) {
                         pdfLyricsText.textContent = `⏳ OCR pág. ${p}/${pdf.numPages}...`;
                         const page = await pdf.getPage(p);
@@ -454,7 +430,6 @@
                         canvas.height = viewport.height;
                         await page.render({ canvasContext: ctx, viewport: viewport }).promise;
 
-                        // Apaga tudo que é preto (pentagrama/notas) e deixa só o texto vermelho
                         isolateRedTextOnCanvas(canvas);
 
                         const { data } = await Tesseract.recognize(canvas, 'por');
@@ -462,70 +437,46 @@
 
                         ocrLines.forEach(rawLine => {
                             const txt = rawLine.replace(/\s+/g, ' ').trim();
-                            // Só aceita linhas que tenham palavras reais em minúsculas (descarta A#, C#, etc.)
                             const lowerWords = txt.match(/[a-záàâãéêíóôõúç]{3,}/g) || [];
                             const isInstrument = /trumpet|trompete|flute|sax|clarinet|piano|violin/i.test(txt);
 
                             if (lowerWords.length >= 1 && !isInstrument && txt.length >= 5) {
-                                // Garante que não é maioria maiúscula/lixo
                                 const lowerCount = (txt.match(/[a-záàâãéêíóôõúç]/g) || []).length;
                                 const upperCount = (txt.match(/[A-Z]/g) || []).length;
                                 if (lowerCount > upperCount) {
-                                    foundPhrases.push({
-                                        measure: 1,
-                                        text: txt
-                                    });
+                                    foundTexts.push(cleanOcrText(txt));
                                 }
                             }
                         });
                     }
                 }
 
-                pdfLyricsText.textContent = "📥 Letras PDF";
-
-                if (foundPhrases.length === 0) {
+                if (foundTexts.length === 0) {
+                    pdfLyricsText.textContent = "📥 Letras PDF";
                     alert("Nenhuma frase de letra foi encontrada neste PDF.");
                     return;
                 }
 
-                modalLyricsList.innerHTML = '';
-                foundPhrases.forEach(item => {
-                    const row = document.createElement('div');
-                    row.className = 'modal-row';
-                    row.innerHTML = `
-                        <input type="number" min="1" max="${totalMeasures}" value="${item.measure}" title="Compasso">
-                        <input type="text" value="${item.text.replace(/"/g, '&quot;')}">
-                        <button class="del" title="Remover">✕</button>
-                    `;
-                    row.querySelector('.del').addEventListener('click', () => row.remove());
-                    modalLyricsList.appendChild(row);
+                // Mapeia automaticamente cada frase encontrada para os compassos após pausas
+                const entryMeasures = getPostRestEntryMeasures();
+                savedLyrics = {}; // Limpa letras antigas antes de aplicar as novas
+
+                foundTexts.forEach((phrase, idx) => {
+                    const targetMeasure = entryMeasures[idx] || Math.min(idx + 1, totalMeasures);
+                    savedLyrics[targetMeasure] = phrase;
                 });
 
-                lyricsModal.style.display = 'flex';
+                saveLyricsForScore();
+                drawNoteNamesOverlay();
+
+                pdfLyricsText.textContent = `✅ ${foundTexts.length} letras!`;
+                setTimeout(() => {
+                    pdfLyricsText.textContent = "📥 Letras PDF";
+                }, 2500);
             } catch (err) {
                 pdfLyricsText.textContent = "📥 Letras PDF";
                 alert("Erro ao ler o PDF.");
             }
-        });
-
-        function closeModal() {
-            lyricsModal.style.display = 'none';
-        }
-        btnCloseModal.addEventListener('click', closeModal);
-        btnCancelModal.addEventListener('click', closeModal);
-
-        btnApplyModal.addEventListener('click', () => {
-            const rows = modalLyricsList.querySelectorAll('.modal-row');
-            rows.forEach(row => {
-                const mNum = parseInt(row.querySelector('input[type="number"]').value);
-                const txt = row.querySelector('input[type="text"]').value.trim();
-                if (mNum >= 1 && mNum <= totalMeasures && txt !== '') {
-                    savedLyrics[mNum] = txt;
-                }
-            });
-            saveLyricsForScore();
-            drawNoteNamesOverlay();
-            closeModal();
         });
 
         function getNoteName(sourceNote) {
