@@ -28,7 +28,17 @@
 
         /* Área da Partitura / PDF */
         #sheet-wrapper { flex: 1; background: #ffffff; overflow-y: auto; overflow-x: hidden; padding: 4px 2px; position: relative; }
-        #osmd-container { cursor: pointer; }
+        #osmd-container { cursor: pointer; position: relative; }
+        #note-names-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        .note-label-html {
+            position: absolute;
+            transform: translateX(-50%);
+            color: #b91c1c;
+            font-weight: 700;
+            line-height: 1;
+            white-space: nowrap;
+            text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff;
+        }
         #pdf-container { display: none; flex-direction: column; align-items: center; gap: 10px; padding: 6px; }
         #pdf-container canvas { width: 100%; height: auto; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
         #placeholder { color: #64748b; text-align: center; margin-top: 22vh; padding: 20px; }
@@ -74,6 +84,7 @@
             </label>
         </div>
         <div class="zoom-controls">
+            <span style="font-size:10px; color:#64748b; margin-right:2px;">v5</span>
             <button class="btn-zoom" id="btnZoomOut">−</button>
             <span id="zoomLabel">45%</span>
             <button class="btn-zoom" id="btnZoomIn">+</button>
@@ -86,6 +97,7 @@
             <p>Toque em <b>📄 XML</b> (com cursor e som de trompete) ou em <b>📑 PDF</b> (para abrir seu PDF pronto).</p>
         </div>
         <div id="osmd-container"></div>
+        <div id="note-names-layer"></div>
         <div id="pdf-container"></div>
     </div>
 
@@ -200,6 +212,8 @@
             }
         }
 
+        const sheetWrapper = document.getElementById('sheet-wrapper');
+        const noteNamesLayer = document.getElementById('note-names-layer');
         const xmlInput = document.getElementById('xmlInput');
         const pdfInput = document.getElementById('pdfInput');
         const audioInput = document.getElementById('audioInput');
@@ -246,39 +260,20 @@
             return letter + acc;
         }
 
-        // Posiciona os nomes das notas usando as coordenadas reais do SVG (sem distorção de zoom)
+        // Camada HTML em pixels exatos: imune a distorções de zoom do SVG
         function drawNoteNamesOverlay() {
-            const existing = osmdContainer.querySelectorAll('.note-name-overlay');
-            existing.forEach(el => el.remove());
+            noteNamesLayer.innerHTML = '';
+            if (!showNoteNames || currentMode !== 'xml' || !osmd || !osmd.graphic || !osmd.graphic.MeasureList) return;
 
-            if (!showNoteNames || !osmd || !osmd.graphic || !osmd.graphic.MeasureList) return;
-            const svg = osmdContainer.querySelector('svg');
-            if (!svg || !svg.getScreenCTM) return;
-
-            const ctm = svg.getScreenCTM();
-            if (!ctm) return;
-            const invCtm = ctm.inverse();
-            const ns = "http://www.w3.org/2000/svg";
-
-            function screenToSvg(sx, sy) {
-                const pt = svg.createSVGPoint();
-                pt.x = sx;
-                pt.y = sy;
-                return pt.matrixTransform(invCtm);
-            }
-
-            // Tamanho da fonte proporcional à escala interna do SVG
-            const fontSize = Math.round(13 / Math.max(0.25, ctm.a) * osmd.zoom);
+            const wrapperRect = sheetWrapper.getBoundingClientRect();
+            const scrollTop = sheetWrapper.scrollTop;
+            const scrollLeft = sheetWrapper.scrollLeft;
+            const fontSize = Math.max(8, Math.round(16 * osmd.zoom));
+            const frag = document.createDocumentFragment();
 
             for (let m = 0; m < osmd.graphic.MeasureList.length; m++) {
                 const gm = osmd.graphic.MeasureList[m][0];
                 if (!gm || !gm.staffEntries) continue;
-
-                // Descobre o topo exato da pauta deste compasso
-                let measureTopSvgY = null;
-                if (gm.stave && gm.stave.getYForLine) {
-                    measureTopSvgY = gm.stave.getYForLine(0);
-                }
 
                 for (let s = 0; s < gm.staffEntries.length; s++) {
                     const se = gm.staffEntries[s];
@@ -296,35 +291,32 @@
                             const label = getNoteName(sn);
                             if (!label) continue;
 
-                            const noteEl = gn.getSVGGElement ? gn.getSVGGElement() : null;
+                            let noteEl = gn.getSVGGElement ? gn.getSVGGElement() : null;
+                            if (!noteEl && gn.vfnote && gn.vfnote[0] && gn.vfnote[0].attrs) {
+                                noteEl = gn.vfnote[0].attrs.el;
+                            }
                             if (!noteEl) continue;
 
                             const headEl = noteEl.querySelector('.vf-notehead') || noteEl;
                             const headRect = headEl.getBoundingClientRect();
                             const noteRect = noteEl.getBoundingClientRect();
-
                             if (headRect.width === 0 && headRect.height === 0) continue;
 
-                            const centerSvg = screenToSvg(headRect.left + headRect.width / 2, noteRect.top);
-                            // Fica alinhado acima da pauta e sobe automaticamente se a haste/nota for alta
-                            const baseTopY = (measureTopSvgY !== null)
-                                ? Math.min(measureTopSvgY - 14, centerSvg.y - 6)
-                                : (centerSvg.y - 8);
+                            const x = (headRect.left - wrapperRect.left) + scrollLeft + (headRect.width / 2);
+                            const y = (noteRect.top - wrapperRect.top) + scrollTop - fontSize - 3;
 
-                            const textEl = document.createElementNS(ns, "text");
-                            textEl.setAttribute("class", "note-name-overlay");
-                            textEl.setAttribute("x", centerSvg.x);
-                            textEl.setAttribute("y", baseTopY);
-                            textEl.setAttribute("fill", "#b91c1c");
-                            textEl.setAttribute("font-size", Math.max(9, fontSize) + "px");
-                            textEl.setAttribute("font-weight", "bold");
-                            textEl.setAttribute("text-anchor", "middle");
-                            textEl.textContent = label;
-                            svg.appendChild(textEl);
+                            const span = document.createElement('span');
+                            span.className = 'note-label-html';
+                            span.style.left = x + 'px';
+                            span.style.top = y + 'px';
+                            span.style.fontSize = fontSize + 'px';
+                            span.textContent = label;
+                            frag.appendChild(span);
                         }
                     }
                 }
             }
+            noteNamesLayer.appendChild(frag);
         }
 
         function getIterator() {
@@ -440,7 +432,7 @@
             if (currentMode === 'xml' && osmd) {
                 osmd.zoom = currentZoom;
                 osmd.render();
-                setTimeout(drawNoteNamesOverlay, 50);
+                setTimeout(drawNoteNamesOverlay, 100);
             } else if (currentMode === 'pdf') {
                 const canvases = pdfContainer.querySelectorAll('canvas');
                 canvases.forEach(c => {
@@ -449,10 +441,9 @@
             }
         }
 
-        // Redesenha os nomes se girar o celular
         window.addEventListener('resize', () => {
             if (currentMode === 'xml' && osmd) {
-                setTimeout(drawNoteNamesOverlay, 250);
+                setTimeout(drawNoteNamesOverlay, 300);
             }
         });
 
@@ -506,6 +497,7 @@
             placeholder.style.display = 'none';
             pdfContainer.style.display = 'none';
             osmdContainer.style.display = 'block';
+            noteNamesLayer.style.display = 'block';
             measureRow.style.display = 'flex';
 
             const reader = new FileReader();
@@ -524,10 +516,10 @@
                     osmd.EngravingRules.PageLeftMargin = 1.5;
                     osmd.EngravingRules.PageRightMargin = 1.5;
                     osmd.EngravingRules.PageTopMargin = 2.0;
-                    osmd.EngravingRules.MinimumDistanceBetweenSystems = 5.5;
+                    osmd.EngravingRules.MinimumDistanceBetweenSystems = 6.0;
                     osmd.zoom = currentZoom;
                     osmd.render();
-                    setTimeout(drawNoteNamesOverlay, 80);
+                    setTimeout(drawNoteNamesOverlay, 120);
                     osmd.cursor.show();
 
                     if (osmd.sheet) {
@@ -557,6 +549,7 @@
             currentMode = 'pdf';
             placeholder.style.display = 'none';
             osmdContainer.style.display = 'none';
+            noteNamesLayer.style.display = 'none';
             measureRow.style.display = 'none';
             pdfContainer.style.display = 'flex';
             pdfContainer.innerHTML = '<p style="color:#64748b;">Carregando PDF...</p>';
