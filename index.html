@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Meu Estúdio de Partituras</title>
+    <meta name="theme-color" content="#1e293b">
+    <meta name="mobile-web-app-capable" content="yes">
+    <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js"></script>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+        body { margin: 0; background: #0f172a; color: #f8fafc; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        
+        /* Barra Superior */
+        header { background: #1e293b; padding: 10px 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; }
+        .btn-upload { background: #3b82f6; color: white; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: bold; cursor: pointer; border: none; display: inline-block; }
+        .btn-upload.audio { background: #8b5cf6; }
+        input[type="file"] { display: none; }
+        
+        /* Área da Partitura */
+        #sheet-wrapper { flex: 1; background: #ffffff; overflow-y: auto; overflow-x: hidden; padding: 10px; position: relative; }
+        #placeholder { color: #64748b; text-align: center; margin-top: 25vh; padding: 20px; }
+        
+        /* Painel de Controles Inferior */
+        footer { background: #1e293b; padding: 12px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 10px; }
+        .controls-row { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
+        button.ctrl { background: #334155; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; }
+        button.ctrl.play { background: #10b981; min-width: 110px; }
+        button.ctrl.stop { background: #ef4444; }
+        button.ctrl:active { opacity: 0.8; }
+        
+        .sliders-row { display: flex; gap: 15px; justify-content: space-around; align-items: center; flex-wrap: wrap; font-size: 13px; color: #cbd5e1; }
+        .slider-group { display: flex; align-items: center; gap: 6px; }
+        input[type="range"] { width: 100px; accent-color: #10b981; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <label class="btn-upload">
+            📄 Partitura (.xml)
+            <input type="file" id="xmlInput" accept=".xml,.musicxml">
+        </label>
+        <label class="btn-upload audio">
+            🎵 Áudio (.mp3/.wav)
+            <input type="file" id="audioInput" accept="audio/*">
+        </label>
+        <span id="statusText" style="font-size: 12px; color: #94a3b8;">Pronto</span>
+    </header>
+
+    <div id="sheet-wrapper">
+        <div id="placeholder">
+            <h3>Nenhuma partitura carregada</h3>
+            <p>Toque em <b>📄 Partitura (.xml)</b> lá em cima para abrir um arquivo MusicXML.</p>
+        </div>
+        <div id="osmd-container"></div>
+    </div>
+
+    <footer>
+        <div class="controls-row">
+            <button class="ctrl stop" id="btnReset">⏮ Início</button>
+            <button class="ctrl play" id="btnPlay">▶ Tocar</button>
+            <button class="ctrl" id="btnNext">Nota ⏭</button>
+        </div>
+        <div class="sliders-row">
+            <div class="slider-group">
+                <span>Veloc. Áudio: <b id="speedVal">100%</b></span>
+                <input type="range" id="speedSlider" min="0.5" max="1.5" step="0.05" value="1">
+            </div>
+            <div class="slider-group">
+                <span>Cursor BPM: <b id="bpmVal">80</b></span>
+                <input type="range" id="bpmSlider" min="30" max="200" step="2" value="80">
+            </div>
+        </div>
+        <audio id="audioPlayer" style="display:none;"></audio>
+    </footer>
+
+    <script>
+        let osmd = null;
+        let isPlaying = false;
+        let cursorTimer = null;
+        let currentBpm = 80;
+
+        const xmlInput = document.getElementById('xmlInput');
+        const audioInput = document.getElementById('audioInput');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const statusText = document.getElementById('statusText');
+        const placeholder = document.getElementById('placeholder');
+        const btnPlay = document.getElementById('btnPlay');
+        const btnReset = document.getElementById('btnReset');
+        const btnNext = document.getElementById('btnNext');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedVal = document.getElementById('speedVal');
+        const bpmSlider = document.getElementById('bpmSlider');
+        const bpmVal = document.getElementById('bpmVal');
+
+        // Carregar Partitura MusicXML
+        xmlInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            statusText.textContent = "Carregando partitura...";
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                placeholder.style.display = 'none';
+                if (!osmd) {
+                    osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("osmd-container", {
+                        autoResize: true,
+                        backend: "svg",
+                        drawTitle: true,
+                        followCursor: true
+                    });
+                }
+                try {
+                    await osmd.load(ev.target.result);
+                    osmd.render();
+                    osmd.cursor.show();
+                    statusText.textContent = "Partitura pronta!";
+                } catch (err) {
+                    statusText.textContent = "Erro ao ler arquivo XML.";
+                    alert("Não foi possível ler esta partitura. Use um arquivo .musicxml ou .xml não compactado.");
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // Carregar Áudio MP3/WAV
+        audioInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const url = URL.createObjectURL(file);
+            audioPlayer.src = url;
+            audioPlayer.playbackRate = parseFloat(speedSlider.value);
+            statusText.textContent = "Áudio: " + file.name.substring(0, 15);
+        });
+
+        // Controle de Velocidade do Áudio
+        speedSlider.addEventListener('input', () => {
+            const rate = parseFloat(speedSlider.value);
+            speedVal.textContent = Math.round(rate * 100) + "%";
+            audioPlayer.playbackRate = rate;
+        });
+
+        // Controle de BPM do Cursor
+        bpmSlider.addEventListener('input', () => {
+            currentBpm = parseInt(bpmSlider.value);
+            bpmVal.textContent = currentBpm;
+            if (isPlaying) {
+                stopCursorTimer();
+                startCursorTimer();
+            }
+        });
+
+        function startCursorTimer() {
+            if (!osmd) return;
+            const msPerBeat = (60 / currentBpm) * 1000;
+            cursorTimer = setInterval(() => {
+                if (osmd.cursor.Iterator.EndReached) {
+                    pauseAll();
+                } else {
+                    osmd.cursor.next();
+                }
+            }, msPerBeat);
+        }
+
+        function stopCursorTimer() {
+            if (cursorTimer) clearInterval(cursorTimer);
+            cursorTimer = null;
+        }
+
+        function pauseAll() {
+            isPlaying = false;
+            btnPlay.textContent = "▶ Tocar";
+            stopCursorTimer();
+            if (audioPlayer.src) audioPlayer.pause();
+        }
+
+        // Botão Play / Pause
+        btnPlay.addEventListener('click', () => {
+            if (isPlaying) {
+                pauseAll();
+            } else {
+                isPlaying = true;
+                btnPlay.textContent = "⏸ Pausar";
+                if (osmd) startCursorTimer();
+                if (audioPlayer.src) audioPlayer.play();
+            }
+        });
+
+        // Botão Voltar ao Início
+        btnReset.addEventListener('click', () => {
+            pauseAll();
+            if (osmd) {
+                osmd.cursor.reset();
+                osmd.cursor.show();
+            }
+            if (audioPlayer.src) audioPlayer.currentTime = 0;
+        });
+
+        // Avançar 1 nota manualmente
+        btnNext.addEventListener('click', () => {
+            if (osmd && !osmd.cursor.Iterator.EndReached) {
+                osmd.cursor.next();
+            }
+        });
+    </script>
+</body>
+</html>
