@@ -128,7 +128,7 @@
         }
 
         let osmd = null;
-        let currentMode = 'none'; // 'xml' ou 'pdf'
+        let currentMode = 'none';
         let isPlaying = false;
         let stepTimeout = null;
         let currentBpm = 80;
@@ -136,10 +136,9 @@
         let playNotesSound = true;
         let playAudioTrack = true;
         let showNoteNames = true;
-        let transposeSemitones = 0; // 0 = Dó, -2 = Sib
+        let transposeSemitones = 0;
         let totalMeasures = 1;
 
-        // Motor de Áudio + Trompete Real (Soundfont)
         let audioCtx = null;
         let trumpetInstrument = null;
         let isLoadingTrumpet = false;
@@ -201,7 +200,6 @@
             }
         }
 
-        // Elementos da tela
         const xmlInput = document.getElementById('xmlInput');
         const pdfInput = document.getElementById('pdfInput');
         const audioInput = document.getElementById('audioInput');
@@ -234,7 +232,6 @@
 
         zoomLabel.textContent = Math.round(currentZoom * 100) + "%";
 
-        // Desenha os nomes das notas em vermelho (A#, B, C#, etc.) acima da pauta no MusicXML
         function getNoteName(sourceNote) {
             if (!sourceNote || !sourceNote.Pitch) return '';
             const noteMap = { 0: 'C', 2: 'D', 4: 'E', 5: 'F', 7: 'G', 9: 'A', 11: 'B' };
@@ -249,24 +246,39 @@
             return letter + acc;
         }
 
+        // Posiciona os nomes das notas usando as coordenadas reais do SVG (sem distorção de zoom)
         function drawNoteNamesOverlay() {
             const existing = osmdContainer.querySelectorAll('.note-name-overlay');
             existing.forEach(el => el.remove());
 
             if (!showNoteNames || !osmd || !osmd.graphic || !osmd.graphic.MeasureList) return;
             const svg = osmdContainer.querySelector('svg');
-            if (!svg) return;
+            if (!svg || !svg.getScreenCTM) return;
 
-            const unit = 10 * osmd.zoom;
-            const fontSize = Math.max(8, Math.round(13 * osmd.zoom));
+            const ctm = svg.getScreenCTM();
+            if (!ctm) return;
+            const invCtm = ctm.inverse();
             const ns = "http://www.w3.org/2000/svg";
+
+            function screenToSvg(sx, sy) {
+                const pt = svg.createSVGPoint();
+                pt.x = sx;
+                pt.y = sy;
+                return pt.matrixTransform(invCtm);
+            }
+
+            // Tamanho da fonte proporcional à escala interna do SVG
+            const fontSize = Math.round(13 / Math.max(0.25, ctm.a) * osmd.zoom);
 
             for (let m = 0; m < osmd.graphic.MeasureList.length; m++) {
                 const gm = osmd.graphic.MeasureList[m][0];
-                if (!gm || !gm.PositionAndShape || !gm.staffEntries) continue;
+                if (!gm || !gm.staffEntries) continue;
 
-                // Posição Y fixa um pouco acima da linha superior do compasso
-                const staffTopY = (gm.PositionAndShape.AbsolutePosition.y - 1.3) * unit;
+                // Descobre o topo exato da pauta deste compasso
+                let measureTopSvgY = null;
+                if (gm.stave && gm.stave.getYForLine) {
+                    measureTopSvgY = gm.stave.getYForLine(0);
+                }
 
                 for (let s = 0; s < gm.staffEntries.length; s++) {
                     const se = gm.staffEntries[s];
@@ -284,13 +296,27 @@
                             const label = getNoteName(sn);
                             if (!label) continue;
 
-                            const noteX = gn.PositionAndShape.AbsolutePosition.x * unit;
+                            const noteEl = gn.getSVGGElement ? gn.getSVGGElement() : null;
+                            if (!noteEl) continue;
+
+                            const headEl = noteEl.querySelector('.vf-notehead') || noteEl;
+                            const headRect = headEl.getBoundingClientRect();
+                            const noteRect = noteEl.getBoundingClientRect();
+
+                            if (headRect.width === 0 && headRect.height === 0) continue;
+
+                            const centerSvg = screenToSvg(headRect.left + headRect.width / 2, noteRect.top);
+                            // Fica alinhado acima da pauta e sobe automaticamente se a haste/nota for alta
+                            const baseTopY = (measureTopSvgY !== null)
+                                ? Math.min(measureTopSvgY - 14, centerSvg.y - 6)
+                                : (centerSvg.y - 8);
+
                             const textEl = document.createElementNS(ns, "text");
                             textEl.setAttribute("class", "note-name-overlay");
-                            textEl.setAttribute("x", noteX);
-                            textEl.setAttribute("y", staffTopY);
-                            textEl.setAttribute("fill", "#b91c1c"); // Vermelho escuro igual ao PDF
-                            textEl.setAttribute("font-size", fontSize + "px");
+                            textEl.setAttribute("x", centerSvg.x);
+                            textEl.setAttribute("y", baseTopY);
+                            textEl.setAttribute("fill", "#b91c1c");
+                            textEl.setAttribute("font-size", Math.max(9, fontSize) + "px");
                             textEl.setAttribute("font-weight", "bold");
                             textEl.setAttribute("text-anchor", "middle");
                             textEl.textContent = label;
@@ -347,7 +373,6 @@
             }
         }
 
-        // Toque direto em qualquer compasso da partitura XML
         osmdContainer.addEventListener('click', (e) => {
             if (currentMode !== 'xml' || !osmd || !osmd.graphic || !osmd.graphic.MeasureList) return;
             const svg = e.target.closest('svg') || osmdContainer.querySelector('svg');
@@ -415,7 +440,7 @@
             if (currentMode === 'xml' && osmd) {
                 osmd.zoom = currentZoom;
                 osmd.render();
-                drawNoteNamesOverlay();
+                setTimeout(drawNoteNamesOverlay, 50);
             } else if (currentMode === 'pdf') {
                 const canvases = pdfContainer.querySelectorAll('canvas');
                 canvases.forEach(c => {
@@ -423,6 +448,13 @@
                 });
             }
         }
+
+        // Redesenha os nomes se girar o celular
+        window.addEventListener('resize', () => {
+            if (currentMode === 'xml' && osmd) {
+                setTimeout(drawNoteNamesOverlay, 250);
+            }
+        });
 
         btnZoomIn.addEventListener('click', () => {
             if (currentZoom < 1.5) {
@@ -465,7 +497,6 @@
             }
         });
 
-        // Carregar Partitura MusicXML
         xmlInput.addEventListener('change', (e) => {
             initAudioCtx();
             const file = e.target.files[0];
@@ -493,10 +524,10 @@
                     osmd.EngravingRules.PageLeftMargin = 1.5;
                     osmd.EngravingRules.PageRightMargin = 1.5;
                     osmd.EngravingRules.PageTopMargin = 2.0;
-                    osmd.EngravingRules.MinimumDistanceBetweenSystems = 4.5; // Espaço extra para os nomes vermelhos
+                    osmd.EngravingRules.MinimumDistanceBetweenSystems = 5.5;
                     osmd.zoom = currentZoom;
                     osmd.render();
-                    drawNoteNamesOverlay();
+                    setTimeout(drawNoteNamesOverlay, 80);
                     osmd.cursor.show();
 
                     if (osmd.sheet) {
@@ -519,7 +550,6 @@
             reader.readAsText(file);
         });
 
-        // Carregar PDF com notas prontas
         pdfInput.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -538,7 +568,7 @@
 
                 for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                     const page = await pdf.getPage(pageNum);
-                    const viewport = page.getViewport({ scale: 2.0 }); // Alta nitidez
+                    const viewport = page.getViewport({ scale: 2.0 });
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
                     canvas.width = viewport.width;
@@ -551,7 +581,6 @@
             }
         });
 
-        // Carregar Áudio MP3/WAV
         audioInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
